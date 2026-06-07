@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from "react";
-import { Volume2, ArrowRight, Eye, PenTool } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Volume2, Eye, PenTool, Check, X } from "lucide-react";
 import TracingCanvas from "./TracingCanvas";
 import ProgressBar from "./ProgressBar";
 import StarRating from "./StarRating";
 import { speakJapanese } from "@/utils/speech";
-import type { QuizQuestion, TracingResult } from "@/utils/helpers";
+import type { QuizQuestion } from "@/utils/helpers";
 import { calculateStars } from "@/utils/helpers";
 import { cn } from "@/lib/utils";
 
@@ -15,48 +15,34 @@ interface QuizPanelProps {
 }
 
 type FeedbackState = "correct" | "wrong" | null;
+type ScreenState = "question" | "write" | "result";
 
-export default function QuizPanel({
-  questions,
-  onComplete,
-  includeTrace = true,
-}: QuizPanelProps) {
+export default function QuizPanel({ questions, onComplete }: QuizPanelProps) {
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [screen, setScreen] = useState<ScreenState>("question");
   const [selected, setSelected] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState>(null);
   const [correctCount, setCorrectCount] = useState(0);
-  const [traceScore, setTraceScore] = useState(0);
-  const [showTrace, setShowTrace] = useState(false);
+  const [totalScore, setTotalScore] = useState(0);
   const [showResult, setShowResult] = useState(false);
   const [finalStars, setFinalStars] = useState(0);
   const [finalScore, setFinalScore] = useState(0);
-  const [lastTraceResult, setLastTraceResult] = useState<TracingResult | null>(
-    null,
-  );
 
-  const displayQuestions = useMemo(() => {
-    return questions;
-  }, [questions]);
-
-  const currentQuestion = displayQuestions[currentIdx];
-  const hasWriteQuestions = displayQuestions.some((q) => q.type === "write");
-  const writeQuestion = useMemo(() => {
-    return displayQuestions.find((q) => q.type === "write");
-  }, [displayQuestions]);
-
-  const isLastQuestion = currentIdx >= displayQuestions.length - 1;
-  const nonWriteQuestions = displayQuestions.filter((q) => q.type !== "write");
-  const totalQuestions =
-    nonWriteQuestions.length +
-    (includeTrace && (hasWriteQuestions || writeQuestion) ? 1 : 0);
-
-  const totalProgress = showTrace
-    ? nonWriteQuestions.length
-    : displayQuestions.filter((q, i) => i < currentIdx && q.type !== "write")
-        .length + (currentQuestion?.type !== "write" ? 1 : 0);
+  const currentQuestion = questions[currentIdx];
+  const totalQuestions = questions.length;
+  const isLast = currentIdx >= totalQuestions - 1;
 
   useEffect(() => {
-    if (currentQuestion?.type === "listen") {
+    if (showResult) return;
+    if (!currentQuestion) return;
+
+    if (currentQuestion.type === "write") {
+      setScreen("write");
+    } else {
+      setScreen("question");
+    }
+
+    if (currentQuestion.type === "listen") {
       const timer = setTimeout(() => {
         speakJapanese(
           currentQuestion.kanaType === "hiragana"
@@ -66,13 +52,17 @@ export default function QuizPanel({
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [currentQuestion]);
+  }, [currentQuestion, showResult]);
 
-  useEffect(() => {
-    if (currentQuestion?.type === "write" && !showTrace) {
-      setShowTrace(true);
+  const goNext = () => {
+    if (isLast) {
+      finishQuiz();
+    } else {
+      setCurrentIdx((i) => i + 1);
+      setSelected(null);
+      setFeedback(null);
     }
-  }, [currentQuestion, showTrace]);
+  };
 
   const handleSelect = (option: string) => {
     if (feedback) return;
@@ -81,49 +71,34 @@ export default function QuizPanel({
     setFeedback(isCorrect ? "correct" : "wrong");
     if (isCorrect) {
       setCorrectCount((c) => c + 1);
+      setTotalScore((s) => s + 1);
     }
-
-    setTimeout(() => {
-      if (isLastQuestion) {
-        if (includeTrace && writeQuestion) {
-          setShowTrace(true);
-        } else {
-          finishQuiz(0);
-        }
-      } else {
-        const nextIdx = currentIdx + 1;
-        const nextQ = displayQuestions[nextIdx];
-        if (nextQ && nextQ.type === "write") {
-          setShowTrace(true);
-        } else {
-          setCurrentIdx(nextIdx);
-          setSelected(null);
-          setFeedback(null);
-        }
-      }
-    }, 1000);
+    setTimeout(goNext, 1200);
   };
 
-  const handleTraceComplete = (score: number, result?: TracingResult) => {
-    setTraceScore(score);
-    if (result) setLastTraceResult(result);
-    setTimeout(() => finishQuiz(score), 500);
+  const handleWriteComplete = (score: number) => {
+    const passed = score >= 60;
+    if (passed) {
+      setCorrectCount((c) => c + 1);
+    }
+    setTotalScore((s) => s + score / 100);
+    setFeedback(passed ? "correct" : "wrong");
+    setTimeout(goNext, 1500);
   };
 
-  const finishQuiz = (trace: number) => {
-    const finalCorrect = correctCount + (trace >= 60 ? 1 : 0);
-    const finalTotal = totalQuestions;
-    const stars = calculateStars(finalCorrect, finalTotal, trace);
+  const finishQuiz = () => {
+    const avgTraceScore =
+      totalQuestions > 0 ? Math.round((totalScore / totalQuestions) * 100) : 0;
+    const stars = calculateStars(correctCount, totalQuestions, avgTraceScore);
     const score = Math.round(
-      (correctCount / Math.max(1, nonWriteQuestions.length)) * 70 +
-        (trace / 100) * 30,
+      (correctCount / Math.max(1, totalQuestions)) * 100,
     );
     setFinalStars(stars);
     setFinalScore(score);
     setShowResult(true);
     setTimeout(() => {
-      onComplete(stars, score, finalCorrect);
-    }, 200);
+      onComplete(stars, score, correctCount);
+    }, 300);
   };
 
   const replaySound = () => {
@@ -150,64 +125,78 @@ export default function QuizPanel({
               : "继续努力！"}
         </h2>
         <p className="text-gray-500 mb-1">得分：{finalScore} 分</p>
-        <p className="text-gray-400 text-sm mb-2">
-          答对 {correctCount + (traceScore >= 60 ? 1 : 0)} / {totalQuestions} 题
+        <p className="text-gray-400 text-sm">
+          答对 {correctCount} / {totalQuestions} 题
         </p>
-        {lastTraceResult && (
-          <div className="text-sm text-gray-400">
-            临摹得分：{traceScore} 分（{lastTraceResult.correctCount}/
-            {lastTraceResult.strokeScores.length} 笔合格）
+      </div>
+    );
+  }
+
+  if (!currentQuestion) return null;
+
+  if (screen === "write") {
+    const kanaChar =
+      currentQuestion.kanaType === "hiragana"
+        ? currentQuestion.kana.hiragana
+        : currentQuestion.kana.katakana;
+
+    return (
+      <div className="flex flex-col items-center gap-6 animate-fade-in-up">
+        <ProgressBar value={currentIdx + 1} max={totalQuestions} showLabel />
+        <div className="text-center">
+          <p className="text-sm text-sakura-500 font-medium mb-1">
+            看罗马音写假名 {currentIdx + 1}/{totalQuestions}
+          </p>
+          <h3 className="text-xl font-bold text-indigo-dark mb-3">
+            请写出下面罗马音对应的假名
+          </h3>
+          <div className="inline-block px-6 py-3 rounded-2xl bg-gradient-to-r from-sakura-100 to-indigo-50 border-2 border-sakura-200">
+            <span className="text-3xl font-bold text-indigo-dark tracking-wider uppercase">
+              {currentQuestion.kana.romaji}
+            </span>
           </div>
+        </div>
+
+        {feedback && (
+          <div
+            className={cn(
+              "flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium text-base",
+              feedback === "correct"
+                ? "text-green-600 bg-green-50 border border-green-200"
+                : "text-red-500 bg-red-50 border border-red-200",
+            )}
+          >
+            {feedback === "correct" ? (
+              <>
+                <Check className="w-5 h-5" />
+                写得很棒！
+              </>
+            ) : (
+              <>
+                <X className="w-5 h-5" />
+                继续加油，正确答案是：
+                <span className="font-display text-2xl text-indigo-dark ml-1">
+                  {kanaChar}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
+        {!feedback && (
+          <TracingCanvas
+            kana={kanaChar}
+            kanaData={currentQuestion.kana}
+            kanaType={currentQuestion.kanaType}
+            onComplete={handleWriteComplete}
+            size={280}
+            mode="write"
+            showHint={true}
+          />
         )}
       </div>
     );
   }
-
-  if (showTrace && (currentQuestion || writeQuestion)) {
-    const traceKana =
-      currentQuestion?.type === "write" ? currentQuestion : writeQuestion;
-    if (!traceKana) return null;
-    const kanaChar =
-      traceKana.kanaType === "hiragana"
-        ? traceKana.kana.hiragana
-        : traceKana.kana.katakana;
-    const isWriteMode = traceKana.type === "write";
-
-    return (
-      <div className="flex flex-col items-center gap-6 animate-fade-in-up">
-        <ProgressBar value={totalProgress + 1} max={totalQuestions} showLabel />
-        <div className="text-center">
-          <p className="text-sm text-sakura-500 font-medium mb-1">
-            {isWriteMode ? "看罗马音写假名" : "临摹练习"} {totalProgress + 1}/
-            {totalQuestions}
-          </p>
-          <h3 className="text-xl font-bold text-indigo-dark mb-2">
-            {isWriteMode
-              ? `请写出下面罗马音对应的假名`
-              : "请在画布上描红下面的假名"}
-          </h3>
-          {isWriteMode && (
-            <div className="inline-block px-6 py-3 rounded-2xl bg-gradient-to-r from-sakura-100 to-indigo-50 border-2 border-sakura-200">
-              <span className="text-3xl font-bold text-indigo-dark tracking-wider uppercase">
-                {traceKana.kana.romaji}
-              </span>
-            </div>
-          )}
-        </div>
-        <TracingCanvas
-          kana={kanaChar}
-          kanaData={traceKana.kana}
-          kanaType={traceKana.kanaType}
-          onComplete={handleTraceComplete}
-          size={280}
-          mode={isWriteMode ? "write" : "trace"}
-          showHint={true}
-        />
-      </div>
-    );
-  }
-
-  if (!currentQuestion || currentQuestion.type === "write") return null;
 
   const typeLabels: Record<string, { label: string; icon: React.ReactNode }> = {
     read: {
@@ -226,14 +215,14 @@ export default function QuizPanel({
 
   return (
     <div className="flex flex-col gap-6 animate-fade-in-up">
-      <ProgressBar value={totalProgress} max={totalQuestions} showLabel />
+      <ProgressBar value={currentIdx + 1} max={totalQuestions} showLabel />
 
       <div className="flex items-center gap-2 text-sakura-500 font-medium text-sm">
         {typeLabels[currentQuestion.type]?.icon}
         <span>
           {typeLabels[currentQuestion.type]?.label}{" "}
           <span className="text-gray-400">
-            ({totalProgress}/{nonWriteQuestions.length})
+            ({currentIdx + 1}/{totalQuestions})
           </span>
         </span>
       </div>
@@ -308,22 +297,22 @@ export default function QuizPanel({
       {feedback && (
         <div
           className={cn(
-            "text-center py-2 px-4 rounded-xl font-medium",
+            "flex items-center justify-center gap-2 py-2 px-4 rounded-xl font-medium",
             feedback === "correct"
               ? "text-green-600 bg-green-50"
               : "text-red-500 bg-red-50",
           )}
         >
           {feedback === "correct" ? (
-            <span>✓ 回答正确！</span>
+            <>
+              <Check className="w-5 h-5" />
+              回答正确！
+            </>
           ) : (
-            <span>✗ 回答错误，正确答案是：{currentQuestion.correctAnswer}</span>
-          )}
-          {isLastQuestion && includeTrace && (
-            <span className="ml-2 inline-flex items-center">
-              <ArrowRight className="w-4 h-4 ml-1" />
-              准备临摹...
-            </span>
+            <>
+              <X className="w-5 h-5" />
+              回答错误，正确答案是：{currentQuestion.correctAnswer}
+            </>
           )}
         </div>
       )}

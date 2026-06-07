@@ -2,15 +2,14 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { Eraser, Check, RotateCcw, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { speakJapanese } from "@/utils/speech";
-import type { Stroke, StrokePoint, Kana, KanaType } from "@/data/kana";
+import type { StrokePoint, Kana, KanaType } from "@/data/kana";
 import { getStrokesForKana } from "@/data/kana";
-import { scoreTracing, type TracingResult } from "@/utils/helpers";
 
 interface TracingCanvasProps {
   kana: string;
   kanaData?: Kana;
   kanaType?: KanaType;
-  onComplete?: (score: number, result?: TracingResult) => void;
+  onComplete?: (score: number) => void;
   showSubmit?: boolean;
   size?: number;
   showHint?: boolean;
@@ -18,16 +17,6 @@ interface TracingCanvasProps {
 }
 
 const CANVAS_SIZE = 300;
-const SCALE = 1.07;
-const OFFSET_X = 10;
-const OFFSET_Y = 10;
-
-function transformPoint(pt: StrokePoint): StrokePoint {
-  return {
-    x: pt.x * SCALE + OFFSET_X,
-    y: pt.y * SCALE + OFFSET_Y,
-  };
-}
 
 export default function TracingCanvas({
   kana,
@@ -50,12 +39,9 @@ export default function TracingCanvas({
 
   const scale = size / CANVAS_SIZE;
 
-  const referenceStrokes: Stroke[] = useCallback(() => {
-    if (kanaData) {
-      return getStrokesForKana(kanaData, kanaType);
-    }
-    return [];
-  }, [kanaData, kanaType])();
+  const expectedStrokeCount = kanaData
+    ? getStrokesForKana(kanaData, kanaType).length
+    : 3;
 
   const drawBackground = useCallback(
     (ctx: CanvasRenderingContext2D) => {
@@ -77,73 +63,18 @@ export default function TracingCanvas({
     [size, scale],
   );
 
-  const drawReferenceGuide = useCallback(
+  const drawReferenceKana = useCallback(
     (ctx: CanvasRenderingContext2D) => {
       if (!showGuide) return;
-
-      if (mode === "trace") {
-        ctx.save();
-        ctx.font = `${size * 0.7}px "Noto Serif JP", "Yu Mincho", serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "rgba(255, 183, 197, 0.25)";
-        ctx.fillText(kana, size / 2, size / 2 + size * 0.05);
-        ctx.restore();
-      }
-
-      referenceStrokes.forEach((stroke, idx) => {
-        const pts = stroke.points.map(transformPoint);
-        if (pts.length < 2) return;
-
-        ctx.beginPath();
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        if (idx < currentStrokeIdx) {
-          ctx.strokeStyle = "rgba(43, 76, 126, 0.3)";
-          ctx.lineWidth = 8 * scale;
-        } else if (idx === currentStrokeIdx) {
-          ctx.strokeStyle = "rgba(255, 120, 150, 0.6)";
-          ctx.lineWidth = 10 * scale;
-        } else {
-          ctx.strokeStyle = "rgba(200, 200, 200, 0.25)";
-          ctx.lineWidth = 6 * scale;
-        }
-
-        const first = pts[0];
-        ctx.moveTo(first.x * scale, first.y * scale);
-        for (let i = 1; i < pts.length; i++) {
-          ctx.lineTo(pts[i].x * scale, pts[i].y * scale);
-        }
-        ctx.stroke();
-
-        if (idx === currentStrokeIdx) {
-          const start = pts[0];
-          ctx.beginPath();
-          ctx.arc(start.x * scale, start.y * scale, 6 * scale, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(255, 100, 130, 0.8)";
-          ctx.fill();
-
-          const end = pts[pts.length - 1];
-          ctx.beginPath();
-          ctx.arc(end.x * scale, end.y * scale, 5 * scale, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(43, 76, 126, 0.7)";
-          ctx.fill();
-        }
-
-        if (idx === currentStrokeIdx) {
-          const start = pts[0];
-          ctx.beginPath();
-          ctx.arc(start.x * scale, start.y * scale, 14 * scale, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(255, 100, 130, 0.5)";
-          ctx.lineWidth = 2 * scale;
-          ctx.setLineDash([4 * scale, 3 * scale]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      });
+      ctx.save();
+      ctx.font = `${size * 0.7}px "Noto Serif JP", "Yu Mincho", serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255, 183, 197, 0.3)";
+      ctx.fillText(kana, size / 2, size / 2 + size * 0.05);
+      ctx.restore();
     },
-    [showGuide, mode, kana, size, scale, currentStrokeIdx, referenceStrokes],
+    [showGuide, kana, size],
   );
 
   const drawCompletedStrokes = useCallback(
@@ -152,7 +83,7 @@ export default function TracingCanvas({
         if (strokePts.length < 2) return;
         ctx.beginPath();
         ctx.strokeStyle = "#2B4C7E";
-        ctx.lineWidth = size * 0.012;
+        ctx.lineWidth = size * 0.018;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
         ctx.moveTo(strokePts[0].x, strokePts[0].y);
@@ -171,7 +102,7 @@ export default function TracingCanvas({
       if (pts.length < 2) return;
       ctx.beginPath();
       ctx.strokeStyle = "#2B4C7E";
-      ctx.lineWidth = size * 0.012;
+      ctx.lineWidth = size * 0.018;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -190,12 +121,12 @@ export default function TracingCanvas({
     if (!ctx) return;
 
     drawBackground(ctx);
-    drawReferenceGuide(ctx);
+    drawReferenceKana(ctx);
     drawCompletedStrokes(ctx);
     drawCurrentStroke(ctx);
   }, [
     drawBackground,
-    drawReferenceGuide,
+    drawReferenceKana,
     drawCompletedStrokes,
     drawCurrentStroke,
   ]);
@@ -255,36 +186,91 @@ export default function TracingCanvas({
 
     if (currentStrokePoints.current.length > 1) {
       setCompletedStrokes((prev) => [...prev, currentStrokePoints.current]);
-      setCurrentStrokeIdx((prev) =>
-        Math.min(prev + 1, referenceStrokes.length),
-      );
+      setCurrentStrokeIdx((prev) => prev + 1);
     }
     currentStrokePoints.current = [];
   };
 
-  const canvasToRefSpace = (strokePts: StrokePoint[]): StrokePoint[] => {
-    return strokePts.map((pt) => ({
-      x: (pt.x / scale - OFFSET_X) / SCALE,
-      y: (pt.y / scale - OFFSET_Y) / SCALE,
-    }));
-  };
+  const calculateScore = useCallback((): number => {
+    const canvas = canvasRef.current;
+    if (!canvas) return 0;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return 0;
 
-  const calculateScore = useCallback((): {
-    score: number;
-    result: TracingResult;
-  } => {
-    const allStrokes = [...completedStrokes];
-    if (currentStrokePoints.current.length > 1) {
-      allStrokes.push(currentStrokePoints.current);
+    const drawnCanvas = document.createElement("canvas");
+    drawnCanvas.width = size;
+    drawnCanvas.height = size;
+    const dCtx = drawnCanvas.getContext("2d");
+    if (!dCtx) return 0;
+
+    dCtx.fillStyle = "#000";
+    completedStrokes.forEach((strokePts) => {
+      if (strokePts.length < 2) return;
+      dCtx.beginPath();
+      dCtx.strokeStyle = "#000";
+      dCtx.lineWidth = size * 0.025;
+      dCtx.lineCap = "round";
+      dCtx.lineJoin = "round";
+      dCtx.moveTo(strokePts[0].x, strokePts[0].y);
+      for (let i = 1; i < strokePts.length; i++) {
+        dCtx.lineTo(strokePts[i].x, strokePts[i].y);
+      }
+      dCtx.stroke();
+    });
+
+    const refCanvas = document.createElement("canvas");
+    refCanvas.width = size;
+    refCanvas.height = size;
+    const rCtx = refCanvas.getContext("2d");
+    if (!rCtx) return 0;
+
+    rCtx.fillStyle = "#000";
+    rCtx.font = `${size * 0.7}px "Noto Serif JP", "Yu Mincho", serif`;
+    rCtx.textAlign = "center";
+    rCtx.textBaseline = "middle";
+    rCtx.fillText(kana, size / 2, size / 2 + size * 0.05);
+
+    const drawnData = dCtx.getImageData(0, 0, size, size).data;
+    const refData = rCtx.getImageData(0, 0, size, size).data;
+
+    let refPixels = 0;
+    let drawnPixels = 0;
+    let overlapPixels = 0;
+    let wrongPixels = 0;
+
+    for (let i = 0; i < drawnData.length; i += 4) {
+      const isRef = refData[i + 3] > 128;
+      const isDrawn = drawnData[i + 3] > 50;
+      if (isRef) refPixels++;
+      if (isDrawn) drawnPixels++;
+      if (isRef && isDrawn) overlapPixels++;
+      if (!isRef && isDrawn) wrongPixels++;
     }
-    const strokesInRefSpace = allStrokes.map(canvasToRefSpace);
-    const result = scoreTracing(strokesInRefSpace, referenceStrokes);
-    return { score: result.totalScore, result };
-  }, [completedStrokes, referenceStrokes, scale]);
+
+    if (refPixels === 0) return hasDrawn ? 50 : 0;
+
+    const coverage = overlapPixels / refPixels;
+    const accuracy = drawnPixels > 0 ? overlapPixels / drawnPixels : 0;
+    const strokeCountDiff = Math.abs(
+      completedStrokes.length - expectedStrokeCount,
+    );
+    const strokeCountScore = Math.max(
+      0,
+      1 - strokeCountDiff / Math.max(1, expectedStrokeCount),
+    );
+
+    let score = coverage * 55 + accuracy * 25 + strokeCountScore * 20;
+    score = Math.round(score * 100);
+
+    if (!hasDrawn) score = 0;
+    score = Math.max(0, Math.min(100, score));
+
+    return score;
+  }, [kana, size, completedStrokes, expectedStrokeCount, hasDrawn]);
 
   const handleSubmit = () => {
-    const { score, result } = calculateScore();
-    onComplete?.(score, result);
+    const score = calculateScore();
+    onComplete?.(score);
   };
 
   const handleClear = () => {
@@ -307,24 +293,21 @@ export default function TracingCanvas({
     <div className="flex flex-col items-center gap-4">
       <div className="flex items-center gap-4 text-sm text-gray-500">
         <span className="font-medium text-indigo-dark">
-          笔画:{" "}
-          {Math.min(
-            currentStrokeIdx + (isDrawing ? 1 : 0),
-            referenceStrokes.length,
-          )}{" "}
-          / {referenceStrokes.length}
+          笔画: {currentStrokeIdx} / {expectedStrokeCount}
         </span>
-        <button
-          onClick={() => setShowGuide((g) => !g)}
-          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 transition-colors"
-        >
-          {showGuide ? (
-            <EyeOff className="w-3.5 h-3.5" />
-          ) : (
-            <Eye className="w-3.5 h-3.5" />
-          )}
-          {showGuide ? "隐藏引导" : "显示引导"}
-        </button>
+        {mode === "write" && (
+          <button
+            onClick={() => setShowGuide((g) => !g)}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 transition-colors"
+          >
+            {showGuide ? (
+              <EyeOff className="w-3.5 h-3.5" />
+            ) : (
+              <Eye className="w-3.5 h-3.5" />
+            )}
+            {showGuide ? "隐藏提示" : "显示提示"}
+          </button>
+        )}
       </div>
 
       <div
@@ -393,9 +376,9 @@ export default function TracingCanvas({
         )}
       </div>
 
-      {referenceStrokes.length > 0 && (
+      {expectedStrokeCount > 0 && (
         <div className="flex gap-1.5">
-          {referenceStrokes.map((_, idx) => (
+          {Array.from({ length: expectedStrokeCount }).map((_, idx) => (
             <div
               key={idx}
               className={cn(
